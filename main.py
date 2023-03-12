@@ -55,12 +55,12 @@ functs = {"add": "100000", "and": "100100", "div": "011010", "mult": "011000", "
 
 def display_help():
     print("Help text")
+    exit()
 
 
 def tokenizer(instruction):
-    parts = instruction.strip("\n").split(" ")
     token_list = []
-    for i in parts:
+    for i in instruction:
         if instruction_regex.match(i):
             token_list.append(Token(TokenTypes.INSTRUCTION, i))
         elif arg_regex.match(i):
@@ -128,7 +128,7 @@ def syntax(tokenized_inst):
             if register_regex.match(tokenized_inst[1].content):
                 if register_regex.match(tokenized_inst[2].content):
                     if immediate_regex.match(
-                            tokenized_inst[3].content and 0 <= int(tokenized_inst[3].content) < 32):
+                            tokenized_inst[3].content) and 0 <= int(tokenized_inst[3].content) < 32:
                         if not len(tokenized_inst) > 4:
                             parsed_instruction = Instruction(inst, tokenized_inst[1:])
                         else:
@@ -153,7 +153,7 @@ def syntax(tokenized_inst):
             if register_regex.match(tokenized_inst[1].content):
                 if register_regex.match(tokenized_inst[2].content):
                     if immediate_regex.match(
-                            tokenized_inst[3].content and -32768 < int(tokenized_inst[3].content) < 32767):
+                            tokenized_inst[3].content) and -32769 < int(tokenized_inst[3].content) < 32768:
                         if not len(tokenized_inst) > 4:
                             parsed_instruction = Instruction(inst, tokenized_inst[1:])
                         else:
@@ -170,8 +170,8 @@ def syntax(tokenized_inst):
     elif inst in ["sram", "lb", "lh", "lw", "sb", "sh", "sw"]:
         try:
             if register_regex.match(tokenized_inst[1].content):
-                if tokenized_inst[2].token_type != TokenTypes.MEMARG:
-                    if not len(tokenized_inst) > 3:
+                if tokenized_inst[2].token_type == TokenTypes.MEMARG:
+                    if not len(tokenized_inst) > 3:  # TODO CHECK FOR OFFSET SIZE AND FIX SIGN STUFF
                         parsed_instruction = Instruction(inst, tokenized_inst[1:])
                     else:
                         raise ValueError("Too many arguments")
@@ -184,7 +184,7 @@ def syntax(tokenized_inst):
     elif inst == "lui":
         try:
             if register_regex.match(tokenized_inst[1].content):
-                if immediate_regex.match(tokenized_inst[2].content) and 0 <= tokenized_inst[2].content < 65536:
+                if immediate_regex.match(tokenized_inst[2].content) and 0 <= int(tokenized_inst[2].content) < 65536:
                     if not len(tokenized_inst) > 3:
                         parsed_instruction = Instruction(inst, tokenized_inst[1:])
                     else:
@@ -199,7 +199,7 @@ def syntax(tokenized_inst):
     # J instructions
     elif inst in ["j", "jal"]:
         try:
-            if offset_regex.match(tokenized_inst[1].content) and 0 <= tokenized_inst[1].content < 67108864:
+            if offset_regex.match(tokenized_inst[1].content) and 0 <= int(tokenized_inst[1].content) < 67108864:
                 if not len(tokenized_inst) > 2:
                     parsed_instruction = Instruction(inst, tokenized_inst[1:])
                 else:
@@ -233,6 +233,59 @@ def assemble(instruction):
         temp_bin += "00000"
         temp_bin += "00000"
         temp_bin += functs[instruction.action]
+    elif instruction.action == "jr":
+        temp_bin += "000000"
+        temp_bin += get_register_binary(instruction.payload[0])
+        temp_bin += "00000"
+        temp_bin += "00000"
+        temp_bin += "00000"
+        temp_bin += functs[instruction.action]
+    elif instruction.action in ["mfhi", "mflo"]:
+        temp_bin += "000000"
+        temp_bin += "00000"
+        temp_bin += "00000"
+        temp_bin += get_register_binary(instruction.payload[0])
+        temp_bin += "00000"
+        temp_bin += functs[instruction.action]
+    elif instruction.action in ["sll", "sra", "srl"]:
+        temp_bin += "000000"
+        temp_bin += "00000"
+        temp_bin += get_register_binary(instruction.payload[1])
+        temp_bin += get_register_binary(instruction.payload[0])
+        temp_bin += '{:0>5b}'.format(int(instruction.payload[2].content))
+        temp_bin += functs[instruction.action]
+    elif instruction.action in ["break", "rte"]:
+        temp_bin += "000000"
+        temp_bin += "00000"
+        temp_bin += "00000"
+        temp_bin += "00000"
+        temp_bin += "00000"
+        temp_bin += functs[instruction.action]
+    # I instructions
+    elif instruction.action in ["addi", "addiu", "slti"]:  # TODO IS SLTI SIGNED?
+        temp_bin += opcodes[instruction.action]
+        temp_bin += get_register_binary(instruction.payload[1])
+        temp_bin += get_register_binary(instruction.payload[0])
+        temp_bin += get_immediate_binary(instruction.payload[2])
+    elif instruction.action in ["beq", "bne", "ble", "bgt"]:
+        temp_bin += opcodes[instruction.action]
+        temp_bin += get_register_binary(instruction.payload[0])
+        temp_bin += get_register_binary(instruction.payload[1])
+        temp_bin += '{:0>16b}'.format(int(instruction.payload[2].content))
+    elif instruction.action in ["sram", "lb", "lh", "lw", "sb", "sh", "sw"]:  # TODO THIS
+        temp_bin += opcodes[instruction.action]
+        # temp_bin += get_rs()
+        temp_bin += get_register_binary(instruction.payload[0])
+        # temp_bin += get_offset()
+    elif instruction.action == "lui":
+        temp_bin += opcodes["lui"]
+        temp_bin += "00000"
+        temp_bin += get_register_binary(instruction.payload[0])
+        temp_bin += '{:0>16b}'.format(int(instruction.payload[1].content))
+    # J instructions
+    elif instruction.action in ["j", "jal"]:
+        temp_bin += opcodes[instruction.action]
+        temp_bin += '{:0>26b}'.format(int(instruction.payload[0].content))
     endian_result = [temp_bin[24:32], temp_bin[16:24], temp_bin[8:16], temp_bin[0:8]]
     return endian_result
 
@@ -243,6 +296,21 @@ def get_register_binary(register):
     else:
         aux = '{:0>5b}'.format(int(reg_names[register.content]))
     return aux
+
+
+def get_immediate_binary(immediate):  # TODO TWO's COMPLEMENT
+    # if int(int(immediate.content)) >= 0:
+    #     aux = '{:0>16b}'.format(int(immediate.content))
+    # else:
+    #     aux = immediate.content[1:]
+    #     aux = '{:0>16b}'.format(aux)
+    #     temp = ""
+    #     for i in aux:
+    #         if i == "1":
+    #             temp += "0"
+    #         else:
+    #             temp
+    return "AAAAAAAAAAAAAAAA"
 
 
 class Token:
@@ -285,11 +353,17 @@ if __name__ == '__main__':
     lines = file.readlines()
     index = 0
     for line in lines:
-        try:
-            tokens = tokenizer(line)
-            parsed = syntax(tokens)
-            binary = assemble(parsed)
-            print(binary)
-        except ValueError as e:
-            print(str(e) + f" at line {index}")
+        if "#" in line:
+            line = line.split("#")
+            line = line[0]
+        line = line.strip().split(" ")
+        if line[0] != "":
+            try:
+                tokens = tokenizer(line)
+                parsed = syntax(tokens)
+                binary = assemble(parsed)
+                print(binary)
+            except ValueError as e:
+                print(str(e) + f" at line {index}")
+                exit()
         index += 1

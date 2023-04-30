@@ -1,6 +1,6 @@
 import re
 import sys
-from enum import Enum
+from enum import Enum, Flag, auto
 
 # matches instruction_name + endl
 instruction_regex = re.compile(
@@ -53,11 +53,6 @@ functs = {"add": "100000", "and": "100100", "div": "011010", "mult": "011000", "
           "srl": "000010", "sub": "100010", "break": "001101", "rte": "010011", "xchg": "000101", "abc": "111111"}
 
 
-def display_help():
-    print("Help text")
-    exit()
-
-
 def tokenizer(instruction):
     token_list = []
     for i in instruction:
@@ -77,7 +72,7 @@ def tokenizer(instruction):
 
 
 def syntax(tokenized_inst):
-    if tokenized_inst[0].token_type != TokenTypes.INSTRUCTION:
+    if tokenized_inst[0].token_type is not TokenTypes.INSTRUCTION:
         raise ValueError(f"\"{tokenized_inst[0].content}\" is not a recognizable instruction")
     inst = tokenized_inst[0].content
     # R instructions
@@ -170,7 +165,7 @@ def syntax(tokenized_inst):
     elif inst in ["sram", "lb", "lh", "lw", "sb", "sh", "sw"]:
         try:
             if register_regex.match(tokenized_inst[1].content):
-                if tokenized_inst[2].token_type == TokenTypes.MEMARG:
+                if tokenized_inst[2].token_type is TokenTypes.MEMARG:
                     if not len(tokenized_inst) > 3:  # TODO CHECK FOR OFFSET SIZE AND FIX SIGN STUFF
                         parsed_instruction = Instruction(inst, tokenized_inst[1:])
                     else:
@@ -209,7 +204,7 @@ def syntax(tokenized_inst):
         except IndexError:
             raise ValueError("Too few arguments")
     else:
-        raise ValueError("Sanity check, this error should never happen")
+        raise ValueError("This error should never happen. https://xkcd.com/2200/")
     return parsed_instruction
 
 
@@ -274,9 +269,9 @@ def assemble(instruction):
         temp_bin += '{:0>16b}'.format(int(instruction.payload[2].content))
     elif instruction.action in ["sram", "lb", "lh", "lw", "sb", "sh", "sw"]:  # TODO THIS
         temp_bin += opcodes[instruction.action]
-        # temp_bin += get_rs()
+        temp_bin += get_rs_from_memarg(instruction.payload[1])
         temp_bin += get_register_binary(instruction.payload[0])
-        # temp_bin += get_offset()
+        # temp_bin += get_offset_from_memarg()
     elif instruction.action == "lui":
         temp_bin += opcodes["lui"]
         temp_bin += "00000"
@@ -286,6 +281,8 @@ def assemble(instruction):
     elif instruction.action in ["j", "jal"]:
         temp_bin += opcodes[instruction.action]
         temp_bin += '{:0>26b}'.format(int(instruction.payload[0].content))
+    else:
+        raise ValueError("This error should never happen. https://xkcd.com/2200/")
     endian_result = [temp_bin[24:32], temp_bin[16:24], temp_bin[8:16], temp_bin[0:8]]
     return endian_result
 
@@ -313,6 +310,16 @@ def get_immediate_binary(immediate):  # TODO TWO's COMPLEMENT
     return "AAAAAAAAAAAAAAAA"
 
 
+def get_rs_from_memarg(memarg):
+    aux = memarg.content.split("(")
+    rs = aux[1][:-1]
+    if rs.isnumeric():
+        result = '{:0>5b}'.format(int(rs))
+    else:
+        result = '{:0>5b}'.format(int(reg_names[rs]))
+    return result
+
+
 class Token:
     def __init__(self, token_type, content):
         self.token_type = token_type
@@ -320,9 +327,29 @@ class Token:
 
 
 class TokenTypes(Enum):
-    INSTRUCTION = 1
-    ARG = 2
-    MEMARG = 3
+    INSTRUCTION = auto()
+    ARG = auto()
+    MEMARG = auto()
+
+
+class ArgFlags(Flag):
+    HELP = auto()
+    FILE = auto()
+    STDOUT = auto()
+
+
+def display_help():
+    print("Help text")
+    exit()
+
+
+def output(binary, flags):
+    if flags & ArgFlags.STDOUT:
+        print(binary)
+    elif flags & ArgFlags.FILE:
+        pass
+    else:
+        pass
 
 
 class Instruction:
@@ -333,18 +360,23 @@ class Instruction:
 
 if __name__ == '__main__':
     argumentList = sys.argv[1:]
+    flags = ArgFlags(0)
     try:
-        if argumentList[0] == "-h" or argumentList[0] == "--help":
+        if "-h" in argumentList or "--help" in argumentList:
+            flags = flags | flags.HELP
             display_help()
-        else:
-            file = argumentList[0]
-            if file[-4:] != ".txt":  # change extension
-                display_help()
+        if "-f" in argumentList or "--file" in argumentList:
+            flags = flags | flags.FILE
+        if "-o" in argumentList or "--output" in argumentList:
+            flags = flags | flags.STDOUT
+        file = argumentList[0]
+        if file[-4:] != ".txt":  # change extension
+            display_help()
     except IndexError:
         display_help()
 
     try:
-        file = open(file, "r")
+        file = open(file, "r")  # refactor to use with
     except FileNotFoundError:
         print("No such file exists")
     except IsADirectoryError:
@@ -352,6 +384,7 @@ if __name__ == '__main__':
 
     lines = file.readlines()
     index = 0
+    words = []
     for line in lines:
         if "#" in line:
             line = line.split("#")
@@ -362,8 +395,9 @@ if __name__ == '__main__':
                 tokens = tokenizer(line)
                 parsed = syntax(tokens)
                 binary = assemble(parsed)
-                print(binary)
+                words.append(binary)
             except ValueError as e:
                 print(str(e) + f" at line {index}")
                 exit()
         index += 1
+    output(words, flags)
